@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>プログラミング学習アプリ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Code Dojo</h1>
+        <p class="subtitle">読める・直せるを目指す道場</p>
+        <div class="total-progress">
+          <div class="total-progress-bar"><div id="total-progress-fill"></div></div>
+          <span id="total-progress-text"></span>
+        </div>
+      </div>
+      <nav id="lesson-nav"></nav>
+      <div class="sidebar-footer">
+        <button id="reset-progress" class="btn-ghost">進捗をリセット</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div id="welcome" class="welcome">
+        <h2>ようこそ 👋</h2>
+        <p>このアプリは3つのステップでプログラミングを学びます。</p>
+        <ol>
+          <li><strong>説明を読む</strong> — なぜそう書くのかを納得するまで理解する</li>
+          <li><strong>手本を見ながら入力</strong> — 1文字ずつ自分の手で打つ（タイピング練習も兼ねる）</li>
+          <li><strong>何も見ずに挑戦</strong> — 使う要素だけヒントに、自力で書く</li>
+        </ol>
+        <p>左のメニューからレッスンを選んで始めましょう。順番どおりに進めるのがおすすめです。</p>
+        <p class="welcome-note">※ TypeScript・React・Next.js・React Native・Python・SQL・Rubyのプレビュー実行にはインターネット接続が必要です（実行環境を読み込むため）。HTML・CSS・JavaScript・Git・Railsシミュレーターはオフラインで動きます。</p>
+      </div>
+      <div id="lesson-view" class="lesson-view" hidden>
+        <header class="lesson-header">
+          <span id="lesson-unit" class="unit-badge"></span>
+          <h2 id="lesson-title"></h2>
+        </header>
+        <div class="step-tabs">
+          <button class="step-tab" data-step="1">① 説明</button>
+          <button class="step-tab" data-step="2">② 手本を見て入力</button>
+          <button class="step-tab" data-step="3">③ 見ないで挑戦</button>
+        </div>
+        <div id="step-body" class="step-body"></div>
+      </div>
+      <div id="review-view" class="lesson-view" hidden>
+        <header class="lesson-header">
+          <span id="review-unit" class="unit-badge review-badge"></span>
+          <h2 id="review-title"></h2>
+        </header>
+        <div id="review-body" class="step-body"></div>
+      </div>
+    </main>
+  </div>
+  <script src="lessons1.js"></script>
+  <script src="lessons2.js"></script>
+  <script src="lessons3.js"></script>
+  <script src="lessons4.js"></script>
+  <script src="lessons5.js"></script>
+  <script src="reviews.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
