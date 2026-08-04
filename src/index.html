@@ -19,12 +19,16 @@
       </div>
       <nav id="lesson-nav"></nav>
       <div class="sidebar-footer">
+        <button id="backup-progress" class="btn-ghost">💾 進捗をファイルに保存</button>
+        <button id="restore-progress" class="btn-ghost">📥 保存した進捗を復元</button>
         <button id="reset-progress" class="btn-ghost">進捗をリセット</button>
+        <input type="file" id="restore-file" accept=".json,application/json" hidden>
       </div>
     </aside>
 
     <main class="main">
       <div id="welcome" class="welcome">
+        <div id="progress-notice"></div>
         <h2>ようこそ 👋</h2>
         <p>このアプリは3つのステップでプログラミングを学びます。</p>
         <ol>

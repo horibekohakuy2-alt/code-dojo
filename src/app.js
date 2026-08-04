@@ -2,7 +2,11 @@
 // 実行エンジン: HTML直接表示 / TS・React・RN(Babel変換) / Git(シミュレーター) / Python(Pyodide) / SQL(sql.js)
 
 const STORAGE_KEY = "code-dojo-progress-v1";
+const BROKEN_KEY = "code-dojo-progress-broken";
 
+// loadWarning は loadProgress() が代入するため、progress より先に宣言する
+// （後に置くと let の巻き上げ規則で「初期化前アクセス」エラーになりアプリ全体が停止する）
+let loadWarning = null;
 let progress = loadProgress();
 let currentLessonId = null;
 let currentReviewId = null;
@@ -10,10 +14,19 @@ let currentReviewProblem = 0;
 let currentStep = 1;
 let previewTimer = null;
 
+// 壊れたデータを黙って0に戻さない: 生データを退避キーへ移してから初期化し、警告を残す
 function loadProgress() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return {};
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") throw new Error("形式が不正です");
+    return parsed;
   } catch (e) {
+    try { localStorage.setItem(BROKEN_KEY, raw); } catch (e2) { /* 退避できなくても続行 */ }
+    loadWarning =
+      "⚠ 保存されていた進捗データが読み取れなかったため、進捗を初期化しました。" +
+      "元のデータは削除せず <code>" + BROKEN_KEY + "</code> というキーに退避してあります（復元の手がかりになります）。";
     return {};
   }
 }
@@ -671,6 +684,8 @@ function renderSidebar() {
     Math.round((doneCount / LESSONS.length) * 100) + "%";
   document.getElementById("total-progress-text").textContent =
     doneCount + " / " + LESSONS.length + " レッスン完了";
+
+  if (typeof renderProgressNotice === "function") renderProgressNotice();
 }
 
 // ---------- レッスン表示 ----------
@@ -1201,6 +1216,185 @@ function setupTabKey(textarea) {
     }
   });
 }
+
+// ---------- 進捗のバックアップ（保存・復元） ----------
+// 進捗はブラウザごと・ページの開き方ごとに別々に保存されるため、
+// 消えたとき／別ブラウザへ移したいときのためにファイル1つで持ち出せるようにする
+
+function progressSummary(data) {
+  let lessons = 0;
+  let reviews = 0;
+  Object.keys(data || {}).forEach(function (key) {
+    if (key === "__reviews") {
+      const all = data.__reviews || {};
+      Object.keys(all).forEach(function (rid) {
+        const done = (all[rid] && all[rid].done) || {};
+        Object.keys(done).forEach(function (i) { if (done[i]) reviews++; });
+      });
+    } else if (data[key] && data[key].done) {
+      lessons++;
+    }
+  });
+  return { lessons: lessons, reviews: reviews };
+}
+
+function isValidProgress(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const keys = Object.keys(data);
+  if (!keys.length) return false;
+  return keys.every(function (key) {
+    const v = data[key];
+    if (!v || typeof v !== "object") return false;
+    if (key === "__reviews") return true;
+    return "step1" in v || "step2" in v || "done" in v;
+  });
+}
+
+function todayStamp() {
+  const d = new Date();
+  const pad = function (n) { return (n < 10 ? "0" : "") + n; };
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+function openModal(html) {
+  closeModal();
+  const back = document.createElement("div");
+  back.className = "modal-backdrop";
+  back.id = "app-modal";
+  back.innerHTML = '<div class="modal">' + html + "</div>";
+  document.body.appendChild(back);
+  back.addEventListener("click", function (e) { if (e.target === back) closeModal(); });
+  return back;
+}
+
+function closeModal() {
+  const m = document.getElementById("app-modal");
+  if (m) m.remove();
+}
+
+function exportProgress() {
+  const json = JSON.stringify(progress, null, 2);
+  const name = "code-dojo-progress-" + todayStamp() + ".json";
+  const btn = document.getElementById("backup-progress");
+  try {
+    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    const label = btn.textContent;
+    btn.textContent = "✔ " + name + " を保存";
+    setTimeout(function () { btn.textContent = label; }, 3000);
+  } catch (e) {
+    // ダウンロードできない環境向けフォールバック（無言で失敗させない）
+    openModal(
+      "<h3>ファイルとして保存できませんでした</h3>" +
+      "<p>下の内容をコピーして、テキストファイルやObsidianのノートに貼り付けて保存してください。</p>" +
+      '<textarea class="code-input" style="min-height:160px" readonly>' + escapeHtml(json) + "</textarea>" +
+      '<div class="btn-row"><button class="btn" id="modal-close">閉じる</button></div>'
+    );
+    document.getElementById("modal-close").addEventListener("click", closeModal);
+  }
+}
+
+function showRestoreDialog() {
+  openModal(
+    "<h3>📥 保存した進捗を復元</h3>" +
+    "<p>バックアップしたJSONファイルを選ぶか、中身を貼り付けてください。</p>" +
+    '<div class="btn-row"><button class="btn secondary" id="restore-pick">📁 ファイルを選ぶ</button></div>' +
+    '<div class="pane-label">またはJSONを貼り付け</div>' +
+    '<textarea class="code-input" id="restore-text" style="min-height:120px" spellcheck="false" placeholder=\'{"html-01": {"step1": true, ...\'></textarea>' +
+    '<div id="restore-msg"></div>' +
+    '<div class="btn-row"><button class="btn" id="restore-load">読み込む</button>' +
+    '<button class="btn secondary" id="restore-cancel">キャンセル</button></div>'
+  );
+  document.getElementById("restore-pick").addEventListener("click", function () {
+    document.getElementById("restore-file").click();
+  });
+  document.getElementById("restore-cancel").addEventListener("click", closeModal);
+  document.getElementById("restore-load").addEventListener("click", function () {
+    handleRestoreInput(document.getElementById("restore-text").value);
+  });
+}
+
+function restoreError(message) {
+  const el = document.getElementById("restore-msg");
+  if (el) el.innerHTML = '<div class="notice warn">⚠ ' + message + "</div>";
+}
+
+// 読み込んだデータを検証し、上書き前に件数を見せて確認する（壊れたJSONで現在の進捗を潰さない）
+function handleRestoreInput(text) {
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    restoreError("JSONとして読み取れませんでした。ファイルの中身をそのまま貼り付けてください。");
+    return;
+  }
+  if (!isValidProgress(data)) {
+    restoreError("Code Dojoの進捗データではないようです。現在の進捗はそのままにしました。");
+    return;
+  }
+  const incoming = progressSummary(data);
+  const current = progressSummary(progress);
+  openModal(
+    "<h3>この進捗で上書きしますか？</h3>" +
+    "<p>読み込んだデータ: レッスン完了 <strong>" + incoming.lessons + "件</strong> ／ 力試しクリア <strong>" + incoming.reviews + "問</strong></p>" +
+    "<p>いまの進捗: レッスン完了 " + current.lessons + "件 ／ 力試しクリア " + current.reviews + "問<br>" +
+    "<strong>いまの進捗は消えて、読み込んだ内容に置き換わります。</strong></p>" +
+    '<div class="btn-row"><button class="btn" id="restore-apply">上書きする</button>' +
+    '<button class="btn secondary" id="restore-abort">キャンセル</button></div>'
+  );
+  document.getElementById("restore-abort").addEventListener("click", closeModal);
+  document.getElementById("restore-apply").addEventListener("click", function () {
+    progress = data;
+    saveProgress();
+    loadWarning = null;
+    currentLessonId = null;
+    currentReviewId = null;
+    document.getElementById("lesson-view").hidden = true;
+    document.getElementById("review-view").hidden = true;
+    document.getElementById("welcome").hidden = false;
+    renderSidebar();
+    openModal(
+      '<h3>✔ 復元しました</h3><p>レッスン完了 ' + incoming.lessons + "件 ／ 力試しクリア " + incoming.reviews + "問の状態に戻しました。</p>" +
+      '<div class="btn-row"><button class="btn" id="modal-close">閉じる</button></div>'
+    );
+    document.getElementById("modal-close").addEventListener("click", closeModal);
+  });
+}
+
+// 進捗0件のとき「別ブラウザで開いていないか」を案内する（消失と勘違いしやすいため）
+function renderProgressNotice() {
+  const el = document.getElementById("progress-notice");
+  if (!el) return;
+  let html = "";
+  if (loadWarning) html += '<div class="notice warn">' + loadWarning + "</div>";
+  const s = progressSummary(progress);
+  if (s.lessons === 0 && s.reviews === 0) {
+    html +=
+      '<div class="notice">🔎 <strong>進捗が0件です。</strong>' +
+      "以前に進めたはずなのに0件のときは、<strong>いつもと同じブラウザ・同じファイルで開いているか</strong>確認してください" +
+      "（進捗はブラウザごとに別々に保存されるため、別のブラウザで開くと0件に見えます）。<br>" +
+      "はじめて始める場合はこのままで大丈夫です。ときどき左下の「💾 進捗をファイルに保存」でバックアップしておくと安心です。</div>";
+  }
+  el.innerHTML = html;
+}
+
+document.getElementById("backup-progress").addEventListener("click", exportProgress);
+document.getElementById("restore-progress").addEventListener("click", showRestoreDialog);
+document.getElementById("restore-file").addEventListener("change", function (e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () { handleRestoreInput(String(reader.result)); };
+  reader.onerror = function () { restoreError("ファイルを読み込めませんでした。"); };
+  reader.readAsText(file);
+  e.target.value = ""; // 同じファイルを選び直せるようにする
+});
 
 document.querySelectorAll(".step-tab").forEach(function (tab) {
   tab.addEventListener("click", function () {
