@@ -4984,11 +4984,13 @@ end
 
 const STORAGE_KEY = "code-dojo-progress-v1";
 const BROKEN_KEY = "code-dojo-progress-broken";
+const LAST_UNIT_KEY = "code-dojo-last-unit";
 
 // loadWarning は loadProgress() が代入するため、progress より先に宣言する
 // （後に置くと let の巻き上げ規則で「初期化前アクセス」エラーになりアプリ全体が停止する）
 let loadWarning = null;
 let progress = loadProgress();
+let lastUnit = loadLastUnit(); // 最後に開いたユニット＝いま取り組んでいるユニット
 let currentLessonId = null;
 let currentReviewId = null;
 let currentReviewProblem = 0;
@@ -5615,10 +5617,49 @@ function isPhone(lesson) {
 
 // ---------- サイドバー ----------
 
-// 完了したユニットは既定で折りたたむ（進むほどスクロールが増える問題への対処）。
+// ユニットは既定ですべて閉じ、「いま取り組んでいる1ユニット」だけを開く。
 // 手動の開閉はメモリだけで保持し、リロードすると既定に戻す
 // （マイペースの週間タブ weekOpen と同方式。localStorageには保存しない）
 const unitOpen = new Map();
+
+// 「いま取り組んでいるユニット」は最後に開いたユニットで判定する。
+// カリキュラム順から外れて学ぶ（例: CSSの途中でRubyを先取り）場合も追従できるよう、
+// 順番からの推測ではなく実際の操作履歴を1件だけ保存する
+function loadLastUnit() {
+  try {
+    return localStorage.getItem(LAST_UNIT_KEY) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function setLastUnit(unitId) {
+  lastUnit = unitId;
+  try {
+    localStorage.setItem(LAST_UNIT_KEY, unitId);
+  } catch (e) { /* 保存できなくても動作は続ける */ }
+}
+
+function clearLastUnit() {
+  lastUnit = null;
+  try {
+    localStorage.removeItem(LAST_UNIT_KEY);
+  } catch (e) { /* 何もしない */ }
+}
+
+// 記録がない（初回・別ブラウザ・リセット後）ときの受け皿。
+// カリキュラム順で最初の未完了ユニットを「取り組み中」とみなす
+function firstIncompleteUnit() {
+  const unit = UNITS.find(function (u) {
+    return !u.locked && LESSONS.some(function (l) { return l.unit === u.id; }) && !unitComplete(u.id);
+  });
+  return unit ? unit.id : null;
+}
+
+function activeUnitId() {
+  if (lastUnit && UNITS.some(function (u) { return u.id === lastUnit; })) return lastUnit;
+  return firstIncompleteUnit();
+}
 
 // 力試しが未クリアのうちは「完了」としない——閉じると次にやるべき力試しが隠れてしまうため
 function unitComplete(unitId) {
@@ -5627,6 +5668,20 @@ function unitComplete(unitId) {
   if (!unitLessons.every(function (l) { return lessonProgress(l.id).done; })) return false;
   const rv = reviewForUnit(unitId);
   return rv ? reviewDone(rv.id) : true;
+}
+
+// 見出しのカウントは力試しも1件として数える。
+// レッスンだけで数えると、力試しが残っていても「3/3」となり終わった感が出るため
+function unitCounts(unitId) {
+  const unitLessons = LESSONS.filter(function (l) { return l.unit === unitId; });
+  const rv = reviewForUnit(unitId);
+  let done = unitLessons.filter(function (l) { return lessonProgress(l.id).done; }).length;
+  let total = unitLessons.length;
+  if (rv) {
+    total += 1;
+    if (reviewDone(rv.id)) done += 1;
+  }
+  return { done: done, total: total };
 }
 
 // いま開いているレッスン・力試しがこのユニット内にあるか
@@ -5645,22 +5700,23 @@ function unitHasCurrent(unitId) {
 
 function renderSidebar() {
   const nav = document.getElementById("lesson-nav");
+  const activeId = activeUnitId();
   let html = "";
   UNITS.forEach(function (unit) {
     const unitLessons = LESSONS.filter(function (l) { return l.unit === unit.id; });
-    const doneInUnit = unitLessons.filter(function (l) { return lessonProgress(l.id).done; }).length;
+    const counts = unitCounts(unit.id);
     const complete = unitComplete(unit.id);
-    // 手動で開閉していればそれを優先し、なければ「未完了 or いま見ている」なら開く
+    // 既定は全部閉じる。開くのは「いま取り組んでいるユニット」と「いま見ているユニット」だけ
     const open = unitOpen.has(unit.id)
       ? unitOpen.get(unit.id)
-      : (!complete || unitHasCurrent(unit.id));
+      : (unit.id === activeId || unitHasCurrent(unit.id));
 
     html += '<details class="unit-group" data-unit="' + unit.id + '"' + (open ? " open" : "") + ">";
     html += '<summary class="unit-title">' + unit.name;
     if (unit.locked) html += '<span class="locked-badge">🔒 ' + unit.note + "</span>";
     else if (unitLessons.length) {
       html += '<span class="unit-count' + (complete ? " complete" : "") + '">' +
-        (complete ? "✔ " : "") + doneInUnit + "/" + unitLessons.length + "</span>";
+        (complete ? "✔ " : "") + counts.done + "/" + counts.total + "</span>";
     }
     html += "</summary>";
     if (unit.locked || unitLessons.length === 0) {
@@ -5725,6 +5781,7 @@ function openLesson(id) {
   const lesson = getLesson(id);
   // これから開くレッスンが畳まれたままにならないよう、手動の開閉記録を解除する
   unitOpen.delete(lesson.unit);
+  setLastUnit(lesson.unit);
   const p = lessonProgress(id);
   // 最初の未完了ステップから開始
   currentStep = !p.step1 ? 1 : !p.step2 ? 2 : 3;
@@ -6048,6 +6105,7 @@ function openReview(id) {
   currentLessonId = null;
   const rv = getReview(id);
   unitOpen.delete(rv.unit);
+  setLastUnit(rv.unit);
   // 最初の未クリア問題から開始（全クリア済みなら問題1）
   const rp = reviewProgress(id);
   const firstUndone = rv.problems.findIndex(function (_p, i) { return !rp.done[i]; });
@@ -6386,6 +6444,7 @@ function handleRestoreInput(text) {
     saveProgress();
     loadWarning = null;
     unitOpen.clear(); // 進捗が総入れ替えされるので、手動の開閉も既定に戻す
+    clearLastUnit();  // 復元後は、復元した進捗に応じたユニットが開くようにする
     currentLessonId = null;
     currentReviewId = null;
     document.getElementById("lesson-view").hidden = true;
@@ -6441,6 +6500,7 @@ document.getElementById("reset-progress").addEventListener("click", function () 
     progress = {};
     saveProgress();
     unitOpen.clear();
+    clearLastUnit();
     currentLessonId = null;
     currentReviewId = null;
     document.getElementById("lesson-view").hidden = true;
