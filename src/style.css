@@ -110,6 +110,46 @@ body {
   margin-left: 6px;
 }
 
+/* ユニットの折りたたみ（完了したユニットは既定で閉じる） */
+.unit-group > summary.unit-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  padding-bottom: 4px;
+}
+
+.unit-group > summary.unit-title::-webkit-details-marker {
+  display: none;
+}
+
+.unit-group > summary.unit-title::before {
+  content: "▾";
+  font-size: 9px;
+  color: #6b7280;
+}
+
+.unit-group:not([open]) > summary.unit-title::before {
+  content: "▸";
+}
+
+.unit-group > summary.unit-title:hover {
+  color: #e5e7eb;
+}
+
+.unit-count {
+  margin-left: auto;
+  font-weight: normal;
+  font-size: 11px;
+  color: #6b7280;
+  letter-spacing: 0;
+}
+
+.unit-count.complete {
+  color: var(--ok);
+}
+
 .lesson-link {
   display: block;
   width: 100%;

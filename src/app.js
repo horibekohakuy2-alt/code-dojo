@@ -634,15 +634,54 @@ function isPhone(lesson) {
 
 // ---------- サイドバー ----------
 
+// 完了したユニットは既定で折りたたむ（進むほどスクロールが増える問題への対処）。
+// 手動の開閉はメモリだけで保持し、リロードすると既定に戻す
+// （マイペースの週間タブ weekOpen と同方式。localStorageには保存しない）
+const unitOpen = new Map();
+
+// 力試しが未クリアのうちは「完了」としない——閉じると次にやるべき力試しが隠れてしまうため
+function unitComplete(unitId) {
+  const unitLessons = LESSONS.filter(function (l) { return l.unit === unitId; });
+  if (!unitLessons.length) return false;
+  if (!unitLessons.every(function (l) { return lessonProgress(l.id).done; })) return false;
+  const rv = reviewForUnit(unitId);
+  return rv ? reviewDone(rv.id) : true;
+}
+
+// いま開いているレッスン・力試しがこのユニット内にあるか
+// （最後のレッスンを完了した瞬間に、見ているユニットが目の前で畳まれるのを防ぐ）
+function unitHasCurrent(unitId) {
+  if (currentLessonId) {
+    const l = getLesson(currentLessonId);
+    if (l && l.unit === unitId) return true;
+  }
+  if (currentReviewId) {
+    const rv = getReview(currentReviewId);
+    if (rv && rv.unit === unitId) return true;
+  }
+  return false;
+}
+
 function renderSidebar() {
   const nav = document.getElementById("lesson-nav");
   let html = "";
   UNITS.forEach(function (unit) {
     const unitLessons = LESSONS.filter(function (l) { return l.unit === unit.id; });
-    html += '<div class="unit-group">';
-    html += '<div class="unit-title">' + unit.name;
+    const doneInUnit = unitLessons.filter(function (l) { return lessonProgress(l.id).done; }).length;
+    const complete = unitComplete(unit.id);
+    // 手動で開閉していればそれを優先し、なければ「未完了 or いま見ている」なら開く
+    const open = unitOpen.has(unit.id)
+      ? unitOpen.get(unit.id)
+      : (!complete || unitHasCurrent(unit.id));
+
+    html += '<details class="unit-group" data-unit="' + unit.id + '"' + (open ? " open" : "") + ">";
+    html += '<summary class="unit-title">' + unit.name;
     if (unit.locked) html += '<span class="locked-badge">🔒 ' + unit.note + "</span>";
-    html += "</div>";
+    else if (unitLessons.length) {
+      html += '<span class="unit-count' + (complete ? " complete" : "") + '">' +
+        (complete ? "✔ " : "") + doneInUnit + "/" + unitLessons.length + "</span>";
+    }
+    html += "</summary>";
     if (unit.locked || unitLessons.length === 0) {
       html += '<div class="locked-note">準備中</div>';
     } else {
@@ -663,9 +702,18 @@ function renderSidebar() {
           mark + rv.title + "</button>";
       }
     }
-    html += "</div>";
+    html += "</details>";
   });
   nav.innerHTML = html;
+
+  // 手動の開閉だけを記録する。toggleイベントは描画直後にも発火してしまい
+  // 「全ユニットを手動で開いた」と誤記録されるため、summaryのクリックで拾う
+  // （クリックの既定動作でこの後 open が反転するので、反転後の値を入れる）
+  nav.querySelectorAll(".unit-group").forEach(function (d) {
+    d.querySelector("summary").addEventListener("click", function () {
+      unitOpen.set(d.dataset.unit, !d.open);
+    });
+  });
 
   nav.querySelectorAll(".lesson-link").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -694,6 +742,8 @@ function openLesson(id) {
   currentLessonId = id;
   currentReviewId = null;
   const lesson = getLesson(id);
+  // これから開くレッスンが畳まれたままにならないよう、手動の開閉記録を解除する
+  unitOpen.delete(lesson.unit);
   const p = lessonProgress(id);
   // 最初の未完了ステップから開始
   currentStep = !p.step1 ? 1 : !p.step2 ? 2 : 3;
@@ -1016,6 +1066,7 @@ function openReview(id) {
   currentReviewId = id;
   currentLessonId = null;
   const rv = getReview(id);
+  unitOpen.delete(rv.unit);
   // 最初の未クリア問題から開始（全クリア済みなら問題1）
   const rp = reviewProgress(id);
   const firstUndone = rv.problems.findIndex(function (_p, i) { return !rp.done[i]; });
@@ -1353,6 +1404,7 @@ function handleRestoreInput(text) {
     progress = data;
     saveProgress();
     loadWarning = null;
+    unitOpen.clear(); // 進捗が総入れ替えされるので、手動の開閉も既定に戻す
     currentLessonId = null;
     currentReviewId = null;
     document.getElementById("lesson-view").hidden = true;
@@ -1407,6 +1459,7 @@ document.getElementById("reset-progress").addEventListener("click", function () 
   if (confirm("すべての進捗を消してやり直しますか？")) {
     progress = {};
     saveProgress();
+    unitOpen.clear();
     currentLessonId = null;
     currentReviewId = null;
     document.getElementById("lesson-view").hidden = true;
